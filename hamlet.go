@@ -59,10 +59,21 @@ func serve(connection net.Conn) {
             HP: 10,
             AP: 1,})
         connection.Write([]byte(fmt.Sprintf("A wild %s attacks\n", toad.Name)))
+        connection.Write([]byte("fight!\n"))
+        battle := dudes.NewBattle([]*dudes.Character{&toad}, []*dudes.Character{&player})
+        battle.Do()
+        connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", toad.Name, toad.Stats.HP)))
+        connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", player.Name, player.Stats.HP)))
+        connection.Write([]byte("fight!\n"))
         for {
             connection.Write([]byte("command: "))
             readCommand(connection)
+            connection.Write([]byte(fmt.Sprintf("\n %s attacks %s\n", player.Name, toad.Name)))
             (&player).Attacks(&toad)
+            connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", toad.Name, toad.Stats.HP)))
+            connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", player.Name, player.Stats.HP)))
+            connection.Write([]byte(fmt.Sprintf("\n %s attacks %s\n", toad.Name, player.Name)))
+            (&toad).Attacks(&player)
             connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", toad.Name, toad.Stats.HP)))
             connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", player.Name, player.Stats.HP)))
             if (toad.Stats.HP <= 0) {
