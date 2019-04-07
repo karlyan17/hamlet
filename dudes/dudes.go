@@ -1,9 +1,10 @@
-// hamlet/dudes.go
+// hamlet/dudes
 
 package dudes
 
 import (
     "time"
+    "fmt"
 )
 
 type BaseStats struct {
@@ -37,10 +38,10 @@ func NewBattle(Team1, Team2 []*Character) Battle {
 }
 func (battle Battle) Do(){
     for _,fighter := range(battle.team1) {
-        go fighter.fightBattle(battle.team1, battle.team2)
+        go fighter.fightBattle(battle.team1, battle.team2, battle.Log)
     }
     for _,fighter := range(battle.team2) {
-        go fighter.fightBattle(battle.team2, battle.team1)
+        go fighter.fightBattle(battle.team2, battle.team1, battle.Log)
     }
     for index,fighter := range(battle.team1) {
         if (fighter.Stats.HP > 0) {
@@ -59,13 +60,14 @@ func (battle Battle) Do(){
 }
 
 
-func (fighter *Character) fightBattle(friends, foes []*Character){
+func (fighter *Character) fightBattle(friends, foes []*Character, log []string){
     if (fighter.Stats.HP <= 0) {
         return
     }
     for {
         if (fighter.Action != "") {
             fighter.Attacks(foes[1])
+            log = append(log, fmt.Sprintf("%s attacks %s\n", fighter.Name, foes[1].Name))
             time.Sleep(10 * time.Second)
             break
         }

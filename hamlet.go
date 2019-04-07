@@ -1,93 +1,133 @@
 // hamlet.go
 
+
 package main
 
 import (
-    "strings"
+    "hamlet/accman"
+    "hamlet/sessions"
+    "encoding/json"
+    "io/ioutil"
     "fmt"
+    "bufio"
+    "strings"
+    "os"
     "net"
-    "bytes"
-    "hamlet/dudes"
-    "strconv"
+    "log"
 )
 
-// Variables
-func PlayerCreation(connection net.Conn) dudes.Character {
-    var PlayerName string
-    var PlayerHP int
-    var PlayerAP int
-    connection.Write([]byte("Character Creation\n"))
-    connection.Write([]byte("Enter Name: "))
-    PlayerName = readCommand(connection)
-    connection.Write([]byte("\n"))
-
-    connection.Write([]byte("Enter HP: "))
-    PlayerHP,_ = strconv.Atoi(readCommand(connection))
-    connection.Write([]byte("\n"))
-
-    connection.Write([]byte("Enter AP: "))
-    PlayerAP,_ = strconv.Atoi(readCommand(connection))
-    connection.Write([]byte("\n"))
-    fmt.Println(PlayerHP)
-    connection.Write([]byte(strconv.Itoa(PlayerHP)))
-    statistics := dudes.BaseStats{HP: PlayerHP, AP: PlayerAP}
-    connection.Write([]byte(strconv.Itoa(statistics.HP)))
-
-    return dudes.NewCharacter(PlayerName, dudes.BaseStats{HP: PlayerHP, AP: PlayerAP})
-}
-
-func readCommand(connection net.Conn) string {
-    for {
-        var message []byte
-        buff := make([]byte, 1)
-        for {
-            connection.Read(buff)
-            fmt.Print("buff: ")
-            fmt.Println(buff)
-            message = append(message, buff...)
-            if l := len(message); l >= 2 && bytes.Equal(message[(l-2):(l)], []byte("\r\n")) {
-                return strings.TrimSpace(string(message))
-            }
-        }
+func newAcc(id int) accman.Account {
+    var name,pw string
+    reader := bufio.NewReader(os.Stdin)
+    fmt.Println("enter name:")
+    name,_ = reader.ReadString('\n')
+    name = strings.Replace(name, "\n", "", -1)
+    fmt.Println("enter password:")
+    pw,_ = reader.ReadString('\n')
+    pw = strings.Replace(pw, "\n", "", -1)
+    return accman.Account{
+        ID: id,
+        Name: name,
+        PW_hash: accman.NewPW([]byte(pw)),
     }
 }
 
-func serve(connection net.Conn) {
-    player := PlayerCreation(connection)
+var G_accounts []accman.Account
+var G_sessions []*sessions.Session
+var logger *log.Logger
+
+func handle_connection(conn net.Conn) {
+    conn_rw := bufio.NewReadWriter(bufio.NewReader(conn), bufio.NewWriter(conn))
+    my_session := sessions.New(conn_rw)
+    logger.Println("new session: ", my_session)
+    log.Println("new session: ", my_session)
+    G_sessions = append(G_sessions, &my_session)
+    go my_session.UpdateClient()
     for {
-        toad := dudes.NewCharacter("toad", dudes.BaseStats{
-            HP: 10,
-            AP: 1,})
-        connection.Write([]byte(fmt.Sprintf("A wild %s attacks\n", toad.Name)))
-        connection.Write([]byte("fight!\n"))
-        battle := dudes.NewBattle([]*dudes.Character{&toad}, []*dudes.Character{&player})
-        battle.Do()
-        connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", toad.Name, toad.Stats.HP)))
-        connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", player.Name, player.Stats.HP)))
-        connection.Write([]byte("fight!\n"))
-        for {
-            connection.Write([]byte("command: "))
-            readCommand(connection)
-            connection.Write([]byte(fmt.Sprintf("\n %s attacks %s\n", player.Name, toad.Name)))
-            (&player).Attacks(&toad)
-            connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", toad.Name, toad.Stats.HP)))
-            connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", player.Name, player.Stats.HP)))
-            connection.Write([]byte(fmt.Sprintf("\n %s attacks %s\n", toad.Name, player.Name)))
-            (&toad).Attacks(&player)
-            connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", toad.Name, toad.Stats.HP)))
-            connection.Write([]byte(fmt.Sprintf("%s's hitpoints: %d\n", player.Name, player.Stats.HP)))
-            if (toad.Stats.HP <= 0) {
-            connection.Write([]byte(fmt.Sprintf("%s died\n", toad.Name)))
-            break
+        if my_session.Account == nil {
+            message,_ := json.Marshal([...]string{"login", "new", "quit"})
+            nn,err := my_session.Conn_rw.Write(message)
+            if err != nil {
+                logger.Println("ERROR writing message: ",err)
+                log.Println("ERROR writing message: ",err)
+                break
             }
+
+            err = my_session.Conn_rw.WriteByte('\n')
+            if err != nil {
+                logger.Println("ERROR writing end byte")
+                log.Println("ERROR writing end byte")
+                break
+            }
+
+            my_session.Conn_rw.Flush()
+            if err != nil {
+                logger.Println("ERROR flushing buffer: ",err)
+                log.Println("ERROR flushing buffer: ",err)
+                break
+            }
+
+            log.Println("sent ", nn, " bytes: ", string(message))
         }
+        message,err := my_session.Conn_rw.ReadBytes('\n')
+        if err != nil {
+            logger.Println("ERROR reading message: ",err)
+            log.Println("ERROR reading message: ",err)
+            break
+        }
+        logger.Println("message: ",message)
+        log.Println("message: ",message)
     }
 }
 
 func main() {
-    telnet_listen, _ := net.Listen("tcp", ":6666")
-    for {
-        connection, _ := telnet_listen.Accept()
-        go serve(connection)
+    //init
+
+    // initializing log
+    error_log,err := os.OpenFile("error.log", os.O_WRONLY|os.O_APPEND|os.O_CREATE, 0755 )
+    if err != nil {
+        log.Println("ERROR opening error.log: ",err)
     }
+    logger = log.New(error_log, "hamlet ", log.Lshortfile)
+
+    //initializing accounts
+    acc_data,err := ioutil.ReadFile("accounts.json")
+    if err != nil {
+        logger.Println("ERROR opening accounts.json: ",err)
+        log.Println("ERROR opening accounts.json: ",err)
+    }
+
+    err = json.Unmarshal(acc_data, &G_accounts)
+    if err != nil {
+        logger.Println("ERROR parsing sessions.json: ",err)
+        log.Println("ERROR parsing sessions.json: ",err)
+    }
+
+    //initializing net
+    listener,err := net.Listen("tcp", ":6666")
+    if err != nil {
+        logger.Println("ERROR opening tcp socket on port 6666: ",err)
+        log.Println("ERROR opening tcp socket on port 6666: ",err)
+    }
+    for {
+        conn,err := listener.Accept()
+        if err != nil {
+            logger.Println("ERROR accepting connection: ",err)
+            log.Println("ERROR accepting connection: ",err)
+        }
+        logger.Println("new connection: ",conn)
+        log.Println("new connection: ",conn)
+        go handle_connection(conn)
+    }
+
+
+
+
+    acc_data,err = json.Marshal(G_accounts)
+    if err != nil {
+        logger.Println("ERROR parsing acc file to json: ", err)
+        log.Println("ERROR parsing acc file to json: ", err)
+    }
+    log.Println("accd data", acc_data)
+    ioutil.WriteFile("sessions.json", acc_data, 0644)
 }
